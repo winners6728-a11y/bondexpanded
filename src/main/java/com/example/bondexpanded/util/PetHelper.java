@@ -1,15 +1,29 @@
 package com.example.bondexpanded.util;
 
+import com.bondofthebeast.component.ModComponents;
 import com.bondofthebeast.component.PlayerBondComponent;
 import com.example.bondexpanded.BondExpanded;
 import net.minecraft.entity.player.PlayerEntity;
 import net.minecraft.server.network.ServerPlayerEntity;
 
-import java.lang.reflect.Method;
 import java.util.UUID;
 
 public final class PetHelper {
+
     private PetHelper() {
+    }
+
+    public static PlayerBondComponent getComponent(PlayerEntity player) {
+        try {
+            if (player == null) {
+                return null;
+            }
+
+            return ModComponents.PLAYER_BOND.get(player);
+        } catch (Exception e) {
+            BondExpanded.LOGGER.error("Ошибка: " + e.getMessage(), e);
+            return null;
+        }
     }
 
     public static ServerPlayerEntity getPet(ServerPlayerEntity owner) {
@@ -18,25 +32,30 @@ public final class PetHelper {
                 return null;
             }
 
-            PlayerBondComponent component = com.bondofthebeast.component.ModComponents.PLAYER_BOND.get(owner);
+            PlayerBondComponent component = getComponent(owner);
+
             if (component == null || !component.hasOwner()) {
                 return null;
             }
 
-            UUID petUuid = component.getOwnerUUID();
+            UUID petUuid = parseUuid(component.getOwnerUUID());
+
             if (petUuid == null) {
                 return null;
             }
 
-            for (ServerPlayerEntity player : owner.getServer().getPlayerManager().getPlayerList()) {
+            for (ServerPlayerEntity player :
+                    owner.getServer().getPlayerManager().getPlayerList()) {
                 if (petUuid.equals(player.getUuid())) {
                     return player;
                 }
             }
+
+            return null;
         } catch (Exception e) {
             BondExpanded.LOGGER.error("Ошибка: " + e.getMessage(), e);
+            return null;
         }
-        return null;
     }
 
     public static ServerPlayerEntity getOwner(ServerPlayerEntity pet) {
@@ -45,12 +64,14 @@ public final class PetHelper {
                 return null;
             }
 
-            PlayerBondComponent component = com.bondofthebeast.component.ModComponents.PLAYER_BOND.get(pet);
+            PlayerBondComponent component = getComponent(pet);
+
             if (component == null || !component.hasOwner()) {
                 return null;
             }
 
-            UUID ownerUuid = component.getOwnerUUID();
+            UUID ownerUuid = parseUuid(component.getOwnerUUID());
+
             if (ownerUuid == null) {
                 return null;
             }
@@ -58,13 +79,18 @@ public final class PetHelper {
             return pet.getServer().getPlayerManager().getPlayer(ownerUuid);
         } catch (Exception e) {
             BondExpanded.LOGGER.error("Ошибка: " + e.getMessage(), e);
+            return null;
         }
-        return null;
     }
 
     public static boolean isTamed(ServerPlayerEntity pet) {
         try {
-            return pet != null && com.bondofthebeast.component.ModComponents.PLAYER_BOND.get(pet).hasOwner();
+            if (pet == null) {
+                return false;
+            }
+
+            PlayerBondComponent component = getComponent(pet);
+            return component != null && component.hasOwner();
         } catch (Exception e) {
             BondExpanded.LOGGER.error("Ошибка: " + e.getMessage(), e);
             return false;
@@ -73,10 +99,16 @@ public final class PetHelper {
 
     public static String getStage(ServerPlayerEntity pet) {
         try {
-            PlayerBondComponent component = com.bondofthebeast.component.ModComponents.PLAYER_BOND.get(pet);
+            if (pet == null) {
+                return "Неизвестно";
+            }
+
+            PlayerBondComponent component = getComponent(pet);
+
             if (component == null) {
                 return "Неизвестно";
             }
+
             return String.valueOf(component.getBondLevel());
         } catch (Exception e) {
             BondExpanded.LOGGER.error("Ошибка: " + e.getMessage(), e);
@@ -86,11 +118,23 @@ public final class PetHelper {
 
     public static String getPetName(ServerPlayerEntity pet) {
         try {
-            PlayerBondComponent component = com.bondofthebeast.component.ModComponents.PLAYER_BOND.get(pet);
-            if (component == null || component.getPetNickname() == null) {
-                return pet == null ? "Неизвестно" : pet.getName().getString();
+            if (pet == null) {
+                return "Неизвестно";
             }
-            return component.getPetNickname();
+
+            PlayerBondComponent component = getComponent(pet);
+
+            if (component == null) {
+                return pet.getName().getString();
+            }
+
+            String nickname = component.getPetNickname();
+
+            if (nickname == null || nickname.isEmpty()) {
+                return pet.getName().getString();
+            }
+
+            return nickname;
         } catch (Exception e) {
             BondExpanded.LOGGER.error("Ошибка: " + e.getMessage(), e);
             return "Неизвестно";
@@ -99,13 +143,17 @@ public final class PetHelper {
 
     public static boolean releaseBond(ServerPlayerEntity pet) {
         try {
-            PlayerBondComponent component = com.bondofthebeast.component.ModComponents.PLAYER_BOND.get(pet);
+            if (pet == null) {
+                return false;
+            }
+
+            PlayerBondComponent component = getComponent(pet);
+
             if (component == null) {
                 return false;
             }
 
-            Method clearOwner = component.getClass().getMethod("clearOwner");
-            clearOwner.invoke(component);
+            component.clearOwner();
             return true;
         } catch (Exception e) {
             BondExpanded.LOGGER.error("Ошибка: " + e.getMessage(), e);
@@ -113,9 +161,16 @@ public final class PetHelper {
         }
     }
 
-    public static PlayerBondComponent getComponent(PlayerEntity player) {
+    private static UUID parseUuid(String value) {
         try {
-            return com.bondofthebeast.component.ModComponents.PLAYER_BOND.get(player);
+            if (value == null || value.isBlank()) {
+                return null;
+            }
+
+            return UUID.fromString(value);
+        } catch (IllegalArgumentException e) {
+            BondExpanded.LOGGER.error("Ошибка: " + e.getMessage(), e);
+            return null;
         } catch (Exception e) {
             BondExpanded.LOGGER.error("Ошибка: " + e.getMessage(), e);
             return null;
