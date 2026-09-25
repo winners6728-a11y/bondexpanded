@@ -1,0 +1,7 @@
+{
+  "required": false,
+  "package": "com.example.bondexpanded.mixin",
+  "compatibilityLevel": "JAVA_17",
+  "mixins": [],
+  "client": []
+}

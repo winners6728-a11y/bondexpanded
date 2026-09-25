@@ -1,0 +1,29 @@
+{
+  "schemaVersion": 1,
+  "id": "bondexpanded",
+  "version": "${version}",
+  "name": "BondExpanded",
+  "description": "Expanded controls for Bond of the Beast.",
+  "authors": ["BondExpanded"],
+  "license": "MIT",
+  "environment": "*",
+  "entrypoints": {
+    "main": [
+      "com.example.bondexpanded.BondExpanded"
+    ],
+    "client": [
+      "com.example.bondexpanded.client.BondExpandedClient"
+    ]
+  },
+  "mixins": [
+    "bondexpanded.mixins.json"
+  ],
+  "depends": {
+    "fabricloader": ">=0.15.0",
+    "fabric-api": "*",
+    "minecraft": "~1.20.1",
+    "java": ">=17",
+    "bond-of-the-beast": "*",
+    "shape-shifter-curse": "*"
+  }
+}
