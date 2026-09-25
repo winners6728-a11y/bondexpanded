@@ -7,13 +7,20 @@ import net.minecraft.util.Identifier;
 
 public record BondExpandedPacket(String commandId) implements FabricPacket {
 
-    public static final PacketType<BondExpandedPacket> TYPE = PacketType.create(
-            new Identifier("bondexpanded", "command"),
-            BondExpandedPacket::new
-    );
+    public static final Identifier ID =
+            new Identifier("bondexpanded", "command");
 
-    public BondExpandedPacket(PacketByteBuf buf) {
-        this(buf.readString());
+    public static final PacketType<BondExpandedPacket> TYPE =
+            PacketType.create(ID, BondExpandedPacket::read);
+
+    public BondExpandedPacket {
+        if (commandId == null || commandId.isEmpty() || commandId.length() > 32) {
+            throw new IllegalArgumentException("Недопустимая команда");
+        }
+    }
+
+    public static BondExpandedPacket read(PacketByteBuf buf) {
+        return new BondExpandedPacket(buf.readString(32));
     }
 
     @Override
@@ -22,7 +29,7 @@ public record BondExpandedPacket(String commandId) implements FabricPacket {
     }
 
     @Override
-    public PacketType<?> getType() {
+    public PacketType<BondExpandedPacket> getType() {
         return TYPE;
     }
 }
