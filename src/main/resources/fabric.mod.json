@@ -3,8 +3,10 @@
   "id": "bondexpanded",
   "version": "${version}",
   "name": "BondExpanded",
-  "description": "Expanded controls for Bond of the Beast.",
-  "authors": ["BondExpanded"],
+  "description": "Расширение для Bond of the Beast: кнопки управления питомцем.",
+  "authors": [
+    "winners6728-a11y"
+  ],
   "license": "MIT",
   "environment": "*",
   "entrypoints": {
@@ -23,7 +25,7 @@
     "fabric-api": "*",
     "minecraft": "~1.20.1",
     "java": ">=17",
-    "bond-of-the-beast": "*",
+    "bondofthebeast": "*",
     "shape-shifter-curse": "*"
   }
 }
