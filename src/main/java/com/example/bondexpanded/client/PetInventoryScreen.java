@@ -70,7 +70,8 @@ public class PetInventoryScreen extends Screen {
 
     @Override
     public void render(DrawContext context, int mouseX, int mouseY, float delta) {
-        renderBackground(context, mouseX, mouseY, delta);
+        renderBackground(context);
+
         context.drawCenteredTextWithShadow(textRenderer, title, width / 2, guiTop - 25, 0xFFFFFF);
 
         int cols = 9;
