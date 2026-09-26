@@ -13,29 +13,13 @@ import java.util.List;
 public final class GrimoireGuiHandler {
 
     private static final String[] COMMANDS = {
-            "attack",
-            "fetch",
-            "guard",
-            "come",
-            "heal",
-            "speed",
-            "info",
-            "howl",
-            "hunt",
-            "break"
+            "attack", "fetch", "guard", "come", "heal",
+            "speed", "info", "howl", "hunt", "break", "give_open"
     };
 
     private static final String[] LABELS = {
-            "Атака",
-            "Принеси",
-            "Охрана",
-            "Подойди",
-            "Лечение",
-            "Скорость",
-            "Инфо",
-            "Вой",
-            "Охота",
-            "Сломать"
+            "Атака", "Принеси", "Охрана", "Подойди", "Лечение",
+            "Скорость", "Инфо", "Вой", "Охота", "Сломать", "Дай"
     };
 
     private GrimoireGuiHandler() {
@@ -56,8 +40,8 @@ public final class GrimoireGuiHandler {
 
             for (int i = 0; i < COMMANDS.length; i++) {
                 final String commandId = COMMANDS[i];
-                int column = i / 5;
-                int row = i % 5;
+                int column = i / 6;
+                int row = i % 6;
                 int x = startX + column * 84;
                 int y = startY + row * 24;
 
