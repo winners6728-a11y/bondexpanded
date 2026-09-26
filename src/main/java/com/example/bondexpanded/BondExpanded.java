@@ -1,11 +1,17 @@
 package com.example.bondexpanded;
 
 import com.example.bondexpanded.command.BondExpandedCommands;
+import com.example.bondexpanded.network.BondAttackPacket;
 import com.example.bondexpanded.network.BondExpandedPacket;
 import com.example.bondexpanded.util.BondExpandedServerState;
 import net.fabricmc.api.ModInitializer;
 import net.fabricmc.fabric.api.command.v2.CommandRegistrationCallback;
 import net.fabricmc.fabric.api.networking.v1.ServerPlayNetworking;
+import net.minecraft.entity.Entity;
+import net.minecraft.entity.LivingEntity;
+import net.minecraft.server.network.ServerPlayerEntity;
+import net.minecraft.server.world.ServerWorld;
+import net.minecraft.util.Hand;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -32,6 +38,19 @@ public final class BondExpanded implements ModInitializer {
         }
 
         try {
+            ServerPlayNetworking.registerGlobalReceiver(
+                    BondAttackPacket.TYPE,
+                    (packet, player, responseSender) -> {
+                        if (player.getServer() != null) {
+                            player.getServer().execute(() -> handleAttack(player, packet));
+                        }
+                    }
+            );
+        } catch (Exception e) {
+            LOGGER.error("Ошибка регистрации пакета атаки: " + e.getMessage(), e);
+        }
+
+        try {
             BondExpandedServerState.register();
         } catch (Exception e) {
             LOGGER.error("Ошибка регистрации server state: " + e.getMessage(), e);
@@ -44,6 +63,32 @@ public final class BondExpanded implements ModInitializer {
             );
         } catch (Exception e) {
             LOGGER.error("Ошибка регистрации команд: " + e.getMessage(), e);
+        }
+    }
+
+    private static void handleAttack(ServerPlayerEntity player, BondAttackPacket packet) {
+        try {
+            if (!(player.getWorld() instanceof ServerWorld world)) return;
+
+            Entity entity = world.getEntity(packet.targetUuid());
+            if (!(entity instanceof LivingEntity target)) return;
+            if (!target.isAlive() || target.isRemoved()) return;
+
+            double distance = player.distanceTo(target);
+            if (distance > 5.0D) return;
+
+            target.damage(
+                    player.getDamageSources().playerAttack(player),
+                    5.0F
+            );
+
+            player.swingHand(Hand.MAIN_HAND);
+
+            LOGGER.info("[Bondexpanded] Урон по " + target.getName().getString()
+                    + ", осталось HP: " + target.getHealth());
+
+        } catch (Exception e) {
+            LOGGER.error("Ошибка атаки на сервере: " + e.getMessage(), e);
         }
     }
 }
