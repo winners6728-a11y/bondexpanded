@@ -5,7 +5,7 @@ import net.fabricmc.fabric.api.networking.v1.PacketType;
 import net.minecraft.network.PacketByteBuf;
 import net.minecraft.util.Identifier;
 
-public record BondControlPacket(String command, String ownerUuid) implements FabricPacket {
+public record BondControlPacket(String command, String ownerUuid, int x, int y, int z) implements FabricPacket {
 
     public static final Identifier ID = new Identifier("bondexpanded", "control");
 
@@ -15,7 +15,10 @@ public record BondControlPacket(String command, String ownerUuid) implements Fab
     public static BondControlPacket read(PacketByteBuf buf) {
         return new BondControlPacket(
                 buf.readString(32),
-                buf.readString(36)
+                buf.readString(36),
+                buf.readInt(),
+                buf.readInt(),
+                buf.readInt()
         );
     }
 
@@ -23,6 +26,9 @@ public record BondControlPacket(String command, String ownerUuid) implements Fab
     public void write(PacketByteBuf buf) {
         buf.writeString(command);
         buf.writeString(ownerUuid);
+        buf.writeInt(x);
+        buf.writeInt(y);
+        buf.writeInt(z);
     }
 
     @Override
