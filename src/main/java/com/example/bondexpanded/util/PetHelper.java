@@ -38,8 +38,7 @@ public final class PetHelper {
                     owner.getServer().getPlayerManager().getPlayerList()) {
 
                 try {
-                    PlayerBondComponent component =
-                            getComponent(candidate);
+                    PlayerBondComponent component = getComponent(candidate);
 
                     if (component == null) {
                         continue;
@@ -49,11 +48,8 @@ public final class PetHelper {
                         continue;
                     }
 
-                    String ownerUuidString =
-                            component.getOwnerUUID();
-
-                    UUID storedOwnerUuid =
-                            parseUuid(ownerUuidString);
+                    String ownerUuidString = component.getOwnerUUID();
+                    UUID storedOwnerUuid = parseUuid(ownerUuidString);
 
                     if (storedOwnerUuid == null) {
                         continue;
@@ -64,20 +60,14 @@ public final class PetHelper {
                     }
 
                 } catch (Exception e) {
-                    BondExpanded.LOGGER.error(
-                            "Ошибка: " + e.getMessage(),
-                            e
-                    );
+                    BondExpanded.LOGGER.error("Ошибка: " + e.getMessage(), e);
                 }
             }
 
             return null;
 
         } catch (Exception e) {
-            BondExpanded.LOGGER.error(
-                    "Ошибка: " + e.getMessage(),
-                    e
-            );
+            BondExpanded.LOGGER.error("Ошибка: " + e.getMessage(), e);
             return null;
         }
     }
@@ -88,8 +78,7 @@ public final class PetHelper {
                 return null;
             }
 
-            PlayerBondComponent component =
-                    getComponent(pet);
+            PlayerBondComponent component = getComponent(pet);
 
             if (component == null) {
                 return null;
@@ -99,11 +88,8 @@ public final class PetHelper {
                 return null;
             }
 
-            String ownerUuidString =
-                    component.getOwnerUUID();
-
-            UUID ownerUuid =
-                    parseUuid(ownerUuidString);
+            String ownerUuidString = component.getOwnerUUID();
+            UUID ownerUuid = parseUuid(ownerUuidString);
 
             if (ownerUuid == null) {
                 return null;
@@ -114,10 +100,7 @@ public final class PetHelper {
                     .getPlayer(ownerUuid);
 
         } catch (Exception e) {
-            BondExpanded.LOGGER.error(
-                    "Ошибка: " + e.getMessage(),
-                    e
-            );
+            BondExpanded.LOGGER.error("Ошибка: " + e.getMessage(), e);
             return null;
         }
     }
@@ -128,17 +111,12 @@ public final class PetHelper {
                 return false;
             }
 
-            PlayerBondComponent component =
-                    getComponent(pet);
+            PlayerBondComponent component = getComponent(pet);
 
-            return component != null
-                    && component.hasOwner();
+            return component != null && component.hasOwner();
 
         } catch (Exception e) {
-            BondExpanded.LOGGER.error(
-                    "Ошибка: " + e.getMessage(),
-                    e
-            );
+            BondExpanded.LOGGER.error("Ошибка: " + e.getMessage(), e);
             return false;
         }
     }
@@ -149,22 +127,16 @@ public final class PetHelper {
                 return "Неизвестно";
             }
 
-            PlayerBondComponent component =
-                    getComponent(pet);
+            PlayerBondComponent component = getComponent(pet);
 
             if (component == null) {
                 return "Неизвестно";
             }
 
-            return String.valueOf(
-                    component.getBondLevel()
-            );
+            return String.valueOf(component.getBondLevel());
 
         } catch (Exception e) {
-            BondExpanded.LOGGER.error(
-                    "Ошибка: " + e.getMessage(),
-                    e
-            );
+            BondExpanded.LOGGER.error("Ошибка: " + e.getMessage(), e);
             return "Неизвестно";
         }
     }
@@ -175,15 +147,13 @@ public final class PetHelper {
                 return "Неизвестно";
             }
 
-            PlayerBondComponent component =
-                    getComponent(pet);
+            PlayerBondComponent component = getComponent(pet);
 
             if (component == null) {
                 return pet.getName().getString();
             }
 
-            String nickname =
-                    component.getPetNickname();
+            String nickname = component.getPetNickname();
 
             if (nickname == null || nickname.isEmpty()) {
                 return pet.getName().getString();
@@ -192,10 +162,7 @@ public final class PetHelper {
             return nickname;
 
         } catch (Exception e) {
-            BondExpanded.LOGGER.error(
-                    "Ошибка: " + e.getMessage(),
-                    e
-            );
+            BondExpanded.LOGGER.error("Ошибка: " + e.getMessage(), e);
             return "Неизвестно";
         }
     }
@@ -206,8 +173,7 @@ public final class PetHelper {
                 return false;
             }
 
-            PlayerBondComponent component =
-                    getComponent(pet);
+            PlayerBondComponent component = getComponent(pet);
 
             if (component == null) {
                 return false;
@@ -222,11 +188,53 @@ public final class PetHelper {
             return true;
 
         } catch (Exception e) {
-            BondExpanded.LOGGER.error(
-                    "Ошибка: " + e.getMessage(),
-                    e
-            );
+            BondExpanded.LOGGER.error("Ошибка: " + e.getMessage(), e);
             return false;
+        }
+    }
+
+    public static boolean hasCollar(ServerPlayerEntity pet) {
+        try {
+            if (pet == null) {
+                return false;
+            }
+
+            PlayerBondComponent component = getComponent(pet);
+
+            if (component == null) {
+                return false;
+            }
+
+            String[] candidates = {
+                    "hasCollar",
+                    "isCollarEquipped",
+                    "hasCollarEquipped",
+                    "isCollarOn",
+                    "getCollar"
+            };
+
+            for (String name : candidates) {
+                try {
+                    java.lang.reflect.Method m = component.getClass().getMethod(name);
+                    Object result = m.invoke(component);
+
+                    if (result instanceof Boolean) {
+                        return (Boolean) result;
+                    }
+                    if (result != null) {
+                        return true;
+                    }
+                } catch (NoSuchMethodException ignored) {
+                } catch (Exception e) {
+                    BondExpanded.LOGGER.error("Ошибка вызова " + name + ": " + e.getMessage(), e);
+                }
+            }
+
+            return true;
+
+        } catch (Exception e) {
+            BondExpanded.LOGGER.error("Ошибка hasCollar: " + e.getMessage(), e);
+            return true;
         }
     }
 
@@ -239,17 +247,11 @@ public final class PetHelper {
             return UUID.fromString(value);
 
         } catch (IllegalArgumentException e) {
-            BondExpanded.LOGGER.error(
-                    "Ошибка: " + e.getMessage(),
-                    e
-            );
+            BondExpanded.LOGGER.error("Ошибка: " + e.getMessage(), e);
             return null;
 
         } catch (Exception e) {
-            BondExpanded.LOGGER.error(
-                    "Ошибка: " + e.getMessage(),
-                    e
-            );
+            BondExpanded.LOGGER.error("Ошибка: " + e.getMessage(), e);
             return null;
         }
     }
