@@ -5,6 +5,7 @@ import net.fabricmc.fabric.api.client.networking.v1.ClientPlayNetworking;
 import net.fabricmc.fabric.api.client.screen.v1.Screens;
 import net.minecraft.client.gui.screen.Screen;
 import net.minecraft.client.gui.widget.ButtonWidget;
+import net.minecraft.client.gui.widget.ClickableWidget;
 import net.minecraft.text.Text;
 
 import java.util.List;
@@ -45,16 +46,15 @@ public final class GrimoireGuiHandler {
             String className = screen.getClass().getName();
 
             boolean isBondScreen =
-                    className.contains("PetStatusScreen")
-                            || className.contains("Grimoire")
-                            || className.contains("Bond");
+                    className.contains("StaffPetScreen")
+                            || className.contains("PetStatusScreen")
+                            || className.contains("Grimoire");
 
             if (!isBondScreen) {
                 return;
             }
 
-            List<net.minecraft.client.gui.widget.ClickableWidget> buttons =
-                    Screens.getButtons(screen);
+            List<ClickableWidget> buttons = Screens.getButtons(screen);
 
             int startX = Math.max(4, screen.width - 174);
             int startY = 30;
@@ -84,9 +84,7 @@ public final class GrimoireGuiHandler {
 
     private static void sendCommand(String commandId) {
         try {
-            ClientPlayNetworking.send(
-                    new BondExpandedPacket(commandId)
-            );
+            ClientPlayNetworking.send(new BondExpandedPacket(commandId));
         } catch (Exception e) {
             e.printStackTrace();
         }
