@@ -1,24 +1,35 @@
 package com.example.bondexpanded.client;
 
 import com.example.bondexpanded.BondExpanded;
+import com.example.bondexpanded.network.BondAttackPacket;
 import com.example.bondexpanded.network.BondControlPacket;
 import net.fabricmc.fabric.api.client.networking.v1.ClientPlayNetworking;
 import net.minecraft.client.MinecraftClient;
-import net.minecraft.client.network.ClientPlayerEntity;
 import net.minecraft.client.network.AbstractClientPlayerEntity;
+import net.minecraft.client.network.ClientPlayerEntity;
 import net.minecraft.entity.LivingEntity;
 import net.minecraft.entity.mob.HostileEntity;
+import net.minecraft.util.Hand;
 import net.minecraft.util.math.BlockPos;
 import net.minecraft.util.math.Box;
+import net.minecraft.util.math.Direction;
+import net.minecraft.util.math.MathHelper;
+import net.minecraft.util.math.Vec3d;
 
 import java.util.List;
 import java.util.UUID;
 
 public final class BondControlReceiver {
 
+    private static final float YAW_STEP = 2.5F;
+    private static final float PITCH_STEP = 2.0F;
+
     private static String activeCommand = null;
     private static UUID ownerUuid = null;
+    private static BlockPos targetPos = null;
+    private static String phase = null;
     private static int attackCooldown = 0;
+    private static int waitTicks = 0;
 
     private BondControlReceiver() {
     }
@@ -33,7 +44,18 @@ public final class BondControlReceiver {
                     } catch (Exception e) {
                         ownerUuid = null;
                     }
-                    BondExpanded.LOGGER.info("[Bondexpanded] Получена команда: " + activeCommand);
+
+                    if (packet.x() == -1 && packet.y() == -1 && packet.z() == -1) {
+                        targetPos = null;
+                    } else {
+                        targetPos = new BlockPos(packet.x(), packet.y(), packet.z());
+                    }
+
+                    phase = null;
+                    waitTicks = 0;
+
+                    BondExpanded.LOGGER.info("[Bondexpanded] Команда: " + activeCommand
+                            + (targetPos != null ? " @ " + targetPos.toShortString() : ""));
                 }
         );
     }
@@ -47,52 +69,44 @@ public final class BondControlReceiver {
         try {
             switch (activeCommand) {
                 case "come" -> tickCome(client, pet);
-                case "attack" -> tickAttack(pet, 20.0D);
-                case "hunt" -> tickAttack(pet, 32.0D);
+                case "attack" -> tickAttack(client, pet, 20.0D);
+                case "hunt" -> tickAttack(client, pet, 32.0D);
                 case "guard" -> stopMovement(pet);
+                case "fetch" -> tickFetch(client, pet);
+                case "break" -> tickBreak(client, pet);
                 case "stop" -> {
                     stopMovement(pet);
                     activeCommand = null;
+                    phase = null;
+                    targetPos = null;
                 }
                 default -> { }
             }
 
             if (attackCooldown > 0) attackCooldown--;
         } catch (Exception e) {
-            BondExpanded.LOGGER.error("Ошибка в BondControlReceiver: " + e.getMessage(), e);
+            BondExpanded.LOGGER.error("Ошибка: " + e.getMessage(), e);
         }
     }
 
     private static void tickCome(MinecraftClient client, ClientPlayerEntity pet) {
-        if (ownerUuid == null) return;
-
-        AbstractClientPlayerEntity owner = null;
-
-        for (AbstractClientPlayerEntity p : client.world.getPlayers()) {
-            if (p.getUuid().equals(ownerUuid)) {
-                owner = p;
-                break;
-            }
-        }
-
+        AbstractClientPlayerEntity owner = findOwner(client);
         if (owner == null) return;
 
-        double distance = pet.distanceTo(owner);
-
-        if (distance < 3.0D) {
+        if (pet.distanceTo(owner) < 3.0D) {
             stopMovement(pet);
             return;
         }
 
+        smoothLookAt(pet, owner.getX(), owner.getY() + owner.getHeight() / 2.0, owner.getZ());
         moveToward(pet, owner.getX(), owner.getY(), owner.getZ(), 0.25D);
     }
 
-    private static void tickAttack(ClientPlayerEntity pet, double radius) {
+    private static void tickAttack(MinecraftClient client, ClientPlayerEntity pet, double radius) {
         Box box = pet.getBoundingBox().expand(radius);
 
         List<HostileEntity> mobs = pet.getWorld().getEntitiesByClass(
-                HostileEntity.class,
-                box,
+                HostileEntity.class, box,
                 entity -> entity.isAlive() && !entity.isRemoved()
         );
 
@@ -112,19 +126,151 @@ public final class BondControlReceiver {
             return;
         }
 
+        double torsoY = target.getY() + target.getHeight() / 2.0;
+        smoothLookAt(pet, target.getX(), torsoY, target.getZ());
+
         double distance = pet.distanceTo(target);
 
-        if (distance > 2.5D) {
+        if (distance > 2.0D) {
             moveToward(pet, target.getX(), target.getY(), target.getZ(), 0.25D);
         } else {
             stopMovement(pet);
-            faceTarget(pet, target);
 
             if (attackCooldown <= 0) {
-                pet.attack(target);
-                pet.swingHand(net.minecraft.util.Hand.MAIN_HAND);
-                attackCooldown = 10;
+                try {
+                    ClientPlayNetworking.send(new BondAttackPacket(target.getUuid()));
+                    pet.swingHand(Hand.MAIN_HAND);
+
+                    BondExpanded.LOGGER.info("[Bondexpanded] Запрос атаки на " + target.getName().getString());
+                } catch (Exception e) {
+                    BondExpanded.LOGGER.error("Атака сломалась: " + e.getMessage(), e);
+                }
+                attackCooldown = 12;
             }
+        }
+    }
+
+    private static void tickFetch(MinecraftClient client, ClientPlayerEntity pet) {
+        if (targetPos == null) { activeCommand = null; return; }
+        if (phase == null) phase = "going";
+
+        switch (phase) {
+            case "going" -> {
+                double dist = pet.getPos().distanceTo(Vec3d.ofCenter(targetPos));
+                if (dist < 1.8D) {
+                    stopMovement(pet);
+                    phase = "pickup";
+                    waitTicks = 15;
+                    return;
+                }
+                smoothLookAt(pet, targetPos.getX() + 0.5D, targetPos.getY() + 0.5D, targetPos.getZ() + 0.5D);
+                moveToward(pet, targetPos.getX() + 0.5D, targetPos.getY(), targetPos.getZ() + 0.5D, 0.25D);
+            }
+            case "pickup" -> {
+                stopMovement(pet);
+                if (--waitTicks <= 0) phase = "returning";
+            }
+            case "returning" -> {
+                AbstractClientPlayerEntity owner = findOwner(client);
+                if (owner == null) { activeCommand = null; return; }
+                if (pet.distanceTo(owner) < 3.0D) {
+                    dropHeldItem(pet);
+                    stopMovement(pet);
+                    activeCommand = null;
+                    phase = null;
+                    return;
+                }
+                smoothLookAt(pet, owner.getX(), owner.getY() + owner.getHeight() / 2.0, owner.getZ());
+                moveToward(pet, owner.getX(), owner.getY(), owner.getZ(), 0.25D);
+            }
+        }
+    }
+
+    private static void tickBreak(MinecraftClient client, ClientPlayerEntity pet) {
+        if (targetPos == null) { activeCommand = null; return; }
+        if (phase == null) phase = "going";
+
+        switch (phase) {
+            case "going" -> {
+                double dist = pet.getPos().distanceTo(Vec3d.ofCenter(targetPos));
+                if (dist < 3.0D) {
+                    stopMovement(pet);
+                    phase = "breaking";
+                    return;
+                }
+                smoothLookAt(pet, targetPos.getX() + 0.5D, targetPos.getY() + 0.5D, targetPos.getZ() + 0.5D);
+                moveToward(pet, targetPos.getX() + 0.5D, targetPos.getY(), targetPos.getZ() + 0.5D, 0.25D);
+            }
+            case "breaking" -> {
+                stopMovement(pet);
+                smoothLookAt(pet, targetPos.getX() + 0.5D, targetPos.getY() + 0.5D, targetPos.getZ() + 0.5D);
+
+                if (client.world.getBlockState(targetPos).isAir()) {
+                    phase = "pickup";
+                    waitTicks = 15;
+                    return;
+                }
+
+                if (client.interactionManager != null) {
+                    Direction dir = getFacingDirection(pet, targetPos);
+                    try {
+                        client.interactionManager.updateBlockBreakingProgress(targetPos, dir);
+                        pet.swingHand(Hand.MAIN_HAND);
+                    } catch (Exception e) {
+                        BondExpanded.LOGGER.error("Поломка сломалась: " + e.getMessage(), e);
+                    }
+                }
+            }
+            case "pickup" -> {
+                stopMovement(pet);
+                if (--waitTicks <= 0) phase = "returning";
+            }
+            case "returning" -> {
+                AbstractClientPlayerEntity owner = findOwner(client);
+                if (owner == null) { activeCommand = null; return; }
+                if (pet.distanceTo(owner) < 3.0D) {
+                    dropHeldItem(pet);
+                    stopMovement(pet);
+                    activeCommand = null;
+                    phase = null;
+                    return;
+                }
+                smoothLookAt(pet, owner.getX(), owner.getY() + owner.getHeight() / 2.0, owner.getZ());
+                moveToward(pet, owner.getX(), owner.getY(), owner.getZ(), 0.25D);
+            }
+        }
+    }
+
+    private static void smoothLookAt(ClientPlayerEntity pet, double targetX, double targetY, double targetZ) {
+        try {
+            double dx = targetX - pet.getX();
+            double dy = targetY - pet.getEyeY();
+            double dz = targetZ - pet.getZ();
+            double horiz = Math.sqrt(dx * dx + dz * dz);
+
+            if (horiz < 0.01D) return;
+
+            float targetYaw = (float) (Math.atan2(dz, dx) * 180.0D / Math.PI) - 90.0F;
+            float targetPitch = (float) (-Math.atan2(dy, horiz) * 180.0D / Math.PI);
+
+            float currentYaw = pet.getYaw();
+            float currentPitch = pet.getPitch();
+
+            float deltaYaw = MathHelper.wrapDegrees(targetYaw - currentYaw);
+            float deltaPitch = targetPitch - currentPitch;
+
+            float stepYaw = MathHelper.clamp(deltaYaw, -YAW_STEP, YAW_STEP);
+            float stepPitch = MathHelper.clamp(deltaPitch, -PITCH_STEP, PITCH_STEP);
+
+            float newYaw = currentYaw + stepYaw;
+            float newPitch = MathHelper.clamp(currentPitch + stepPitch, -90.0F, 90.0F);
+
+            pet.setYaw(newYaw);
+            pet.setPitch(newPitch);
+            pet.setHeadYaw(newYaw);
+            pet.setBodyYaw(newYaw);
+        } catch (Exception e) {
+            BondExpanded.LOGGER.error("Ошибка поворота: " + e.getMessage(), e);
         }
     }
 
@@ -133,42 +279,65 @@ public final class BondControlReceiver {
         double dz = z - pet.getZ();
         double dist = Math.sqrt(dx * dx + dz * dz);
 
-        if (dist < 0.01D) return;
+        if (dist < 0.5D) {
+            pet.setVelocity(pet.getVelocity().x * 0.3D, pet.getVelocity().y, pet.getVelocity().z * 0.3D);
+            return;
+        }
 
         dx /= dist;
         dz /= dist;
 
-        pet.setVelocity(dx * speed, pet.getVelocity().y, dz * speed);
+        double adjustedSpeed = dist < 2.0D ? speed * 0.6D : speed;
+        pet.setVelocity(dx * adjustedSpeed, pet.getVelocity().y, dz * adjustedSpeed);
 
-        float yaw = (float) (Math.atan2(dz, dx) * 180.0D / Math.PI) - 90.0F;
-        pet.setYaw(yaw);
-        pet.setHeadYaw(yaw);
-        pet.setBodyYaw(yaw);
+        if (pet.isOnGround()) {
+            BlockPos feetPos = pet.getBlockPos();
+            BlockPos ahead = feetPos.add((int) Math.signum(dx), 0, (int) Math.signum(dz));
+            BlockPos above = ahead.up();
 
-        BlockPos ahead = pet.getBlockPos().add(
-                (int) Math.signum(dx), 0, (int) Math.signum(dz)
-        );
+            boolean bottomBlocked = !pet.getWorld().getBlockState(ahead).isAir();
+            boolean topBlocked = !pet.getWorld().getBlockState(above).isAir();
 
-        if (!pet.getWorld().getBlockState(ahead).isAir() && pet.isOnGround()) {
-            pet.jump();
+            if (bottomBlocked && !topBlocked) {
+                pet.jump();
+            }
         }
     }
 
-    private static void faceTarget(ClientPlayerEntity pet, LivingEntity target) {
-        double dx = target.getX() - pet.getX();
-        double dz = target.getZ() - pet.getZ();
-        double dy = target.getEyeY() - pet.getEyeY();
-        double horizontal = Math.sqrt(dx * dx + dz * dz);
+    private static Direction getFacingDirection(ClientPlayerEntity pet, BlockPos pos) {
+        double dx = pos.getX() + 0.5D - pet.getX();
+        double dy = pos.getY() + 0.5D - pet.getY();
+        double dz = pos.getZ() + 0.5D - pet.getZ();
 
-        if (horizontal < 0.001D) return;
+        double absX = Math.abs(dx);
+        double absY = Math.abs(dy);
+        double absZ = Math.abs(dz);
 
-        float yaw = (float) (Math.atan2(dz, dx) * 180.0D / Math.PI) - 90.0F;
-        float pitch = (float) (-Math.atan2(dy, horizontal) * 180.0D / Math.PI);
+        if (absY >= absX && absY >= absZ) return dy > 0 ? Direction.UP : Direction.DOWN;
+        if (absX >= absZ) return dx > 0 ? Direction.EAST : Direction.WEST;
+        return dz > 0 ? Direction.SOUTH : Direction.NORTH;
+    }
 
-        pet.setYaw(yaw);
-        pet.setPitch(pitch);
-        pet.setHeadYaw(yaw);
-        pet.setBodyYaw(yaw);
+    private static void dropHeldItem(ClientPlayerEntity pet) {
+        try {
+            for (int i = 0; i < 9; i++) {
+                if (!pet.getInventory().getStack(i).isEmpty()) {
+                    pet.getInventory().selectedSlot = i;
+                    pet.dropSelectedItem(false);
+                    return;
+                }
+            }
+        } catch (Exception e) {
+            BondExpanded.LOGGER.error("Дроп не удался: " + e.getMessage(), e);
+        }
+    }
+
+    private static AbstractClientPlayerEntity findOwner(MinecraftClient client) {
+        if (ownerUuid == null) return null;
+        for (AbstractClientPlayerEntity p : client.world.getPlayers()) {
+            if (p.getUuid().equals(ownerUuid)) return p;
+        }
+        return null;
     }
 
     private static void stopMovement(ClientPlayerEntity pet) {
