@@ -1,17 +1,18 @@
 package com.example.bondexpanded.util;
 
 import com.example.bondexpanded.BondExpanded;
-import com.example.bondexpanded.movement.PetNavigator;
+import com.example.bondexpanded.network.BondControlPacket;
 import net.fabricmc.fabric.api.event.lifecycle.v1.ServerTickEvents;
-import net.minecraft.entity.LivingEntity;
+import net.fabricmc.fabric.api.networking.v1.ServerPlayNetworking;
+import net.minecraft.entity.effect.StatusEffectInstance;
+import net.minecraft.entity.effect.StatusEffects;
 import net.minecraft.entity.mob.HostileEntity;
 import net.minecraft.server.network.ServerPlayerEntity;
 import net.minecraft.server.world.ServerWorld;
+import net.minecraft.sound.SoundCategory;
+import net.minecraft.sound.SoundEvents;
 import net.minecraft.text.Text;
-import net.minecraft.util.Hand;
-import net.minecraft.util.math.BlockPos;
 import net.minecraft.util.math.Box;
-import net.minecraft.util.math.Vec3d;
 
 import java.util.HashMap;
 import java.util.List;
@@ -20,11 +21,11 @@ import java.util.UUID;
 
 public final class BondExpandedServerState {
 
+    private static final Map<UUID, Long> healCooldown = new HashMap<>();
+    private static final Map<UUID, Long> speedCooldown = new HashMap<>();
+    private static final Map<UUID, Long> howlCooldown = new HashMap<>();
+    private static final Map<UUID, Long> releaseConfirm = new HashMap<>();
     private static final Map<UUID, String> activeCommands = new HashMap<>();
-    private static final Map<UUID, PetNavigator> navigators = new HashMap<>();
-    private static final Map<UUID, LivingEntity> attackTargets = new HashMap<>();
-    private static final Map<UUID, Integer> attackTimers = new HashMap<>();
-    private static final Map<UUID, BlockPos> guardPositions = new HashMap<>();
 
     private BondExpandedServerState() {
     }
@@ -32,7 +33,7 @@ public final class BondExpandedServerState {
     public static void register() {
         ServerTickEvents.END_SERVER_TICK.register(server -> {
             try {
-                tick(server);
+                tickProximity(server);
             } catch (Exception e) {
                 BondExpanded.LOGGER.error("Ошибка: " + e.getMessage(), e);
             }
@@ -54,360 +55,152 @@ public final class BondExpandedServerState {
             }
 
             switch (command) {
-                case "come" -> activateCome(owner, pet);
-                case "guard" -> toggleGuard(owner, pet);
-                case "attack" -> toggleAttack(owner, pet);
-                case "hunt" -> toggleHunt(owner, pet);
-                default -> { }
+                case "come", "attack", "hunt", "guard" -> sendControlToPet(owner, pet, command);
+                case "stop" -> sendControlToPet(owner, pet, "stop");
+                case "heal" -> applyHeal(owner, pet);
+                case "speed" -> applySpeed(owner, pet);
+                case "info" -> showInfo(owner, pet);
+                case "release" -> releaseBond(owner, pet);
+                case "howl" -> doHowl(owner, pet);
+                default -> owner.sendMessage(Text.literal("Неизвестная команда"), false);
             }
         } catch (Exception e) {
             BondExpanded.LOGGER.error("Ошибка: " + e.getMessage(), e);
         }
     }
 
-    private static void activateCome(ServerPlayerEntity owner, ServerPlayerEntity pet) {
+    private static void sendControlToPet(ServerPlayerEntity owner, ServerPlayerEntity pet, String command) {
         try {
-            stopCommand(pet);
-            activeCommands.put(pet.getUuid(), "come");
-            getNavigator(pet).reset();
-            owner.sendMessage(Text.literal("Питомец идёт к вам"), false);
-        } catch (Exception e) {
-            BondExpanded.LOGGER.error("Ошибка: " + e.getMessage(), e);
-        }
-    }
+            activeCommands.put(pet.getUuid(), command);
 
-    private static void toggleGuard(ServerPlayerEntity owner, ServerPlayerEntity pet) {
-        try {
-            UUID uuid = pet.getUuid();
-
-            if ("guard".equals(activeCommands.get(uuid))) {
-                stopCommand(pet);
-                owner.sendMessage(Text.literal("Охрана выключена"), false);
-                return;
-            }
-
-            stopCommand(pet);
-            activeCommands.put(uuid, "guard");
-            guardPositions.put(uuid, pet.getBlockPos().toImmutable());
-            getNavigator(pet).reset();
-            owner.sendMessage(Text.literal("Охрана включена"), false);
-        } catch (Exception e) {
-            BondExpanded.LOGGER.error("Ошибка: " + e.getMessage(), e);
-        }
-    }
-
-    private static void toggleAttack(ServerPlayerEntity owner, ServerPlayerEntity pet) {
-        try {
-            UUID uuid = pet.getUuid();
-
-            if ("attack".equals(activeCommands.get(uuid))) {
-                stopCommand(pet);
-                owner.sendMessage(Text.literal("Атака выключена"), false);
-                return;
-            }
-
-            LivingEntity target = findLookedAtTarget(owner);
-
-            if (target == null) {
-                owner.sendMessage(Text.literal("Вы не смотрите на подходящую цель"), false);
-                return;
-            }
-
-            stopCommand(pet);
-            activeCommands.put(uuid, "attack");
-            attackTargets.put(uuid, target);
-            attackTimers.put(uuid, 0);
-            getNavigator(pet).reset();
-            owner.sendMessage(Text.literal("Атака включена"), false);
-        } catch (Exception e) {
-            BondExpanded.LOGGER.error("Ошибка: " + e.getMessage(), e);
-        }
-    }
-
-    private static void toggleHunt(ServerPlayerEntity owner, ServerPlayerEntity pet) {
-        try {
-            UUID uuid = pet.getUuid();
-
-            if ("hunt".equals(activeCommands.get(uuid))) {
-                stopCommand(pet);
-                owner.sendMessage(Text.literal("Охота выключена"), false);
-                return;
-            }
-
-            stopCommand(pet);
-            activeCommands.put(uuid, "hunt");
-            attackTimers.put(uuid, 0);
-            getNavigator(pet).reset();
-            owner.sendMessage(Text.literal("Охота включена"), false);
-        } catch (Exception e) {
-            BondExpanded.LOGGER.error("Ошибка: " + e.getMessage(), e);
-        }
-    }
-
-    private static void tick(net.minecraft.server.MinecraftServer server) {
-        try {
-            for (ServerPlayerEntity owner : server.getPlayerManager().getPlayerList()) {
-                ServerPlayerEntity pet = PetHelper.getPet(owner);
-                if (pet == null) continue;
-
-                UUID uuid = pet.getUuid();
-                String command = activeCommands.get(uuid);
-                if (command == null) continue;
-
-                if (!owner.getWorld().getRegistryKey().equals(pet.getWorld().getRegistryKey())) {
-                    stopCommand(pet);
-                    continue;
-                }
-
-                switch (command) {
-                    case "come" -> tickCome(owner, pet);
-                    case "guard" -> tickGuard(owner, pet);
-                    case "attack" -> tickAttack(owner, pet);
-                    case "hunt" -> tickHunt(owner, pet);
-                    default -> stopCommand(pet);
-                }
-            }
-        } catch (Exception e) {
-            BondExpanded.LOGGER.error("Ошибка: " + e.getMessage(), e);
-        }
-    }
-
-    private static void tickCome(ServerPlayerEntity owner, ServerPlayerEntity pet) {
-        try {
-            double distance = pet.distanceTo(owner);
-
-            if (distance <= 3.0D) {
-                getNavigator(pet).stop();
-                return;
-            }
-
-            getNavigator(pet).moveTo(owner.getBlockPos());
-            checkPathFailure(owner, pet);
-        } catch (Exception e) {
-            BondExpanded.LOGGER.error("Ошибка: " + e.getMessage(), e);
-        }
-    }
-
-    private static void tickGuard(ServerPlayerEntity owner, ServerPlayerEntity pet) {
-        try {
-            UUID uuid = pet.getUuid();
-            BlockPos guardPos = guardPositions.get(uuid);
-
-            if (guardPos == null) {
-                guardPos = pet.getBlockPos().toImmutable();
-                guardPositions.put(uuid, guardPos);
-            }
-
-            LivingEntity target = findNearestHostile(pet, 16.0D);
-
-            if (target != null) {
-                attackTarget(owner, pet, target);
-                return;
-            }
-
-            double distance = pet.getPos().squaredDistanceTo(Vec3d.ofCenter(guardPos));
-
-            if (distance > 4.0D) {
-                getNavigator(pet).moveTo(guardPos);
-                checkPathFailure(owner, pet);
-            } else {
-                getNavigator(pet).stop();
-            }
-        } catch (Exception e) {
-            BondExpanded.LOGGER.error("Ошибка: " + e.getMessage(), e);
-        }
-    }
-
-    private static void tickAttack(ServerPlayerEntity owner, ServerPlayerEntity pet) {
-        try {
-            UUID uuid = pet.getUuid();
-            LivingEntity target = attackTargets.get(uuid);
-
-            if (target == null || target.isRemoved() || !target.isAlive()) {
-                stopCommand(pet);
-                return;
-            }
-
-            if (!target.getWorld().getRegistryKey().equals(pet.getWorld().getRegistryKey())) {
-                stopCommand(pet);
-                return;
-            }
-
-            attackTarget(owner, pet, target);
-        } catch (Exception e) {
-            BondExpanded.LOGGER.error("Ошибка: " + e.getMessage(), e);
-        }
-    }
-
-    private static void tickHunt(ServerPlayerEntity owner, ServerPlayerEntity pet) {
-        try {
-            UUID uuid = pet.getUuid();
-            LivingEntity target = attackTargets.get(uuid);
-
-            if (target == null || target.isRemoved() || !target.isAlive()
-                    || pet.distanceTo(target) > 32.0D) {
-                target = findNearestHostile(pet, 32.0D);
-                attackTargets.put(uuid, target);
-            }
-
-            if (target == null) {
-                getNavigator(pet).stop();
-                return;
-            }
-
-            attackTarget(owner, pet, target);
-        } catch (Exception e) {
-            BondExpanded.LOGGER.error("Ошибка: " + e.getMessage(), e);
-        }
-    }
-
-    private static void attackTarget(ServerPlayerEntity owner, ServerPlayerEntity pet, LivingEntity target) {
-        try {
-            double distance = pet.distanceTo(target);
-            faceEntity(pet, target);
-
-            if (distance <= 2.75D) {
-                getNavigator(pet).stop();
-
-                int timer = attackTimers.getOrDefault(pet.getUuid(), 0);
-
-                if (timer <= 0) {
-                    pet.attack(target);
-                    pet.swingHand(Hand.MAIN_HAND);
-                    attackTimers.put(pet.getUuid(), 10);
-                } else {
-                    attackTimers.put(pet.getUuid(), timer - 1);
-                }
-                return;
-            }
-
-            getNavigator(pet).moveTo(target.getBlockPos());
-            checkPathFailure(owner, pet);
-        } catch (Exception e) {
-            BondExpanded.LOGGER.error("Ошибка: " + e.getMessage(), e);
-        }
-    }
-
-    private static LivingEntity findNearestHostile(ServerPlayerEntity pet, double radius) {
-        try {
-            ServerWorld world = pet.getServerWorld();
-            Box box = pet.getBoundingBox().expand(radius);
-
-            List<HostileEntity> entities = world.getEntitiesByClass(
-                    HostileEntity.class,
-                    box,
-                    entity -> entity.isAlive() && !entity.isRemoved()
+            ServerPlayNetworking.send(
+                    pet,
+                    new BondControlPacket(command, owner.getUuidAsString())
             );
 
-            LivingEntity nearest = null;
-            double nearestDistance = Double.MAX_VALUE;
+            String msg = switch (command) {
+                case "come" -> "Питомец идёт к вам";
+                case "attack" -> "Питомец атакует";
+                case "hunt" -> "Питомец охотится";
+                case "guard" -> "Питомец охраняет";
+                case "stop" -> "Питомец остановлен";
+                default -> "Команда отправлена";
+            };
 
-            for (HostileEntity entity : entities) {
-                double distance = pet.squaredDistanceTo(entity);
-                if (distance < nearestDistance) {
-                    nearestDistance = distance;
-                    nearest = entity;
-                }
-            }
+            owner.sendMessage(Text.literal(msg), false);
 
-            return nearest;
         } catch (Exception e) {
-            BondExpanded.LOGGER.error("Ошибка: " + e.getMessage(), e);
-            return null;
+            BondExpanded.LOGGER.error("Ошибка отправки: " + e.getMessage(), e);
         }
     }
 
-    private static LivingEntity findLookedAtTarget(ServerPlayerEntity owner) {
-        try {
-            ServerWorld world = owner.getServerWorld();
-            Vec3d start = owner.getCameraPosVec(1.0F);
-            Vec3d direction = owner.getRotationVec(1.0F);
-            Vec3d end = start.add(direction.multiply(20.0D));
+    private static void applyHeal(ServerPlayerEntity owner, ServerPlayerEntity pet) {
+        UUID uuid = pet.getUuid();
+        long now = System.currentTimeMillis();
+        long last = healCooldown.getOrDefault(uuid, 0L);
+        long remaining = 60000L - (now - last);
 
-            Box searchBox = owner.getBoundingBox()
-                    .stretch(direction.multiply(20.0D))
-                    .expand(1.0D);
-
-            List<LivingEntity> candidates = world.getEntitiesByClass(
-                    LivingEntity.class,
-                    searchBox,
-                    entity -> entity != owner && entity.isAlive() && !entity.isSpectator()
-            );
-
-            LivingEntity best = null;
-            double bestDistance = 20.0D;
-
-            for (LivingEntity entity : candidates) {
-                Box box = entity.getBoundingBox().expand(entity.getTargetingMargin());
-                java.util.Optional<Vec3d> hit = box.raycast(start, end);
-
-                if (hit.isPresent()) {
-                    double distance = start.distanceTo(hit.get());
-                    if (distance < bestDistance) {
-                        bestDistance = distance;
-                        best = entity;
-                    }
-                }
-            }
-
-            return best;
-        } catch (Exception e) {
-            BondExpanded.LOGGER.error("Ошибка: " + e.getMessage(), e);
-            return null;
+        if (remaining > 0) {
+            owner.sendMessage(Text.literal("Ещё не готово: " + (remaining / 1000) + " сек"), false);
+            return;
         }
+
+        pet.addStatusEffect(new StatusEffectInstance(StatusEffects.REGENERATION, 200, 1, true, true, true));
+        healCooldown.put(uuid, now);
+        owner.sendMessage(Text.literal("Питомец вылечен"), false);
     }
 
-    private static void faceEntity(ServerPlayerEntity pet, LivingEntity target) {
+    private static void applySpeed(ServerPlayerEntity owner, ServerPlayerEntity pet) {
+        UUID uuid = pet.getUuid();
+        long now = System.currentTimeMillis();
+        long last = speedCooldown.getOrDefault(uuid, 0L);
+        long remaining = 60000L - (now - last);
+
+        if (remaining > 0) {
+            owner.sendMessage(Text.literal("Ещё не готово: " + (remaining / 1000) + " сек"), false);
+            return;
+        }
+
+        pet.addStatusEffect(new StatusEffectInstance(StatusEffects.SPEED, 600, 1, true, true, true));
+        speedCooldown.put(uuid, now);
+        owner.sendMessage(Text.literal("Питомец ускорен"), false);
+    }
+
+    private static void showInfo(ServerPlayerEntity owner, ServerPlayerEntity pet) {
         try {
-            double dx = target.getX() - pet.getX();
-            double dz = target.getZ() - pet.getZ();
-            double dy = target.getEyeY() - pet.getEyeY();
-            double horizontal = Math.sqrt(dx * dx + dz * dz);
+            String name = PetHelper.getPetName(pet);
+            String stage = PetHelper.getStage(pet);
+            float hp = pet.getHealth();
+            String active = activeCommands.getOrDefault(pet.getUuid(), "нет");
 
-            if (horizontal < 0.001D) return;
-
-            float yaw = (float) (Math.atan2(dz, dx) * 180.0D / Math.PI) - 90.0F;
-            float pitch = (float) (-Math.atan2(dy, horizontal) * 180.0D / Math.PI);
-
-            pet.setYaw(yaw);
-            pet.setPitch(pitch);
-            pet.setHeadYaw(yaw);
-            pet.setBodyYaw(yaw);
+            owner.sendMessage(Text.literal("=== Питомец ==="), false);
+            owner.sendMessage(Text.literal("Имя: " + name), false);
+            owner.sendMessage(Text.literal("Стадия: " + stage), false);
+            owner.sendMessage(Text.literal("HP: " + hp), false);
+            owner.sendMessage(Text.literal("Команда: " + active), false);
         } catch (Exception e) {
             BondExpanded.LOGGER.error("Ошибка: " + e.getMessage(), e);
         }
     }
 
-    private static void checkPathFailure(ServerPlayerEntity owner, ServerPlayerEntity pet) {
-        try {
-            PetNavigator navigator = getNavigator(pet);
+    private static void releaseBond(ServerPlayerEntity owner, ServerPlayerEntity pet) {
+        UUID uuid = pet.getUuid();
+        long now = System.currentTimeMillis();
+        long last = releaseConfirm.getOrDefault(uuid, 0L);
 
-            if (navigator.getFailedTicks() > 40) {
-                navigator.stop();
-                owner.sendMessage(Text.literal("Не могу добраться до цели"), false);
-            }
-        } catch (Exception e) {
-            BondExpanded.LOGGER.error("Ошибка: " + e.getMessage(), e);
+        if (now - last > 10000L) {
+            releaseConfirm.put(uuid, now);
+            owner.sendMessage(Text.literal("Нажмите ещё раз в течение 10 секунд для подтверждения"), false);
+            return;
         }
+
+        if (PetHelper.releaseBond(pet)) {
+            owner.sendMessage(Text.literal("Связь разорвана"), false);
+        } else {
+            owner.sendMessage(Text.literal("Не удалось разорвать связь"), false);
+        }
+        releaseConfirm.remove(uuid);
     }
 
-    private static PetNavigator getNavigator(ServerPlayerEntity pet) {
-        return navigators.computeIfAbsent(pet.getUuid(), ignored -> new PetNavigator(pet));
+    private static void doHowl(ServerPlayerEntity owner, ServerPlayerEntity pet) {
+        UUID uuid = pet.getUuid();
+        long now = System.currentTimeMillis();
+        long last = howlCooldown.getOrDefault(uuid, 0L);
+        long remaining = 30000L - (now - last);
+
+        if (remaining > 0) {
+            owner.sendMessage(Text.literal("Ещё не готово: " + (remaining / 1000) + " сек"), false);
+            return;
+        }
+
+        ServerWorld world = pet.getServerWorld();
+        world.playSound(null, pet.getBlockPos(), SoundEvents.ENTITY_WOLF_HOWL, SoundCategory.PLAYERS, 1.0F, 1.0F);
+
+        Box box = pet.getBoundingBox().expand(16.0D);
+        List<HostileEntity> hostiles = world.getEntitiesByClass(HostileEntity.class, box, e -> e.isAlive());
+
+        for (HostileEntity hostile : hostiles) {
+            hostile.addStatusEffect(new StatusEffectInstance(StatusEffects.NAUSEA, 100, 0, true, true, true));
+        }
+
+        owner.addStatusEffect(new StatusEffectInstance(StatusEffects.SPEED, 200, 0, true, true, true));
+        howlCooldown.put(uuid, now);
+        owner.sendMessage(Text.literal("Питомец воет!"), false);
     }
 
-    private static void stopCommand(ServerPlayerEntity pet) {
-        try {
-            UUID uuid = pet.getUuid();
+    private static void tickProximity(net.minecraft.server.MinecraftServer server) {
+        // пассивный эффект рядом — обновляем раз в 100 тиков
+        if (server.getTicks() % 100 != 0) return;
 
-            activeCommands.remove(uuid);
-            attackTargets.remove(uuid);
-            attackTimers.remove(uuid);
-            guardPositions.remove(uuid);
+        for (ServerPlayerEntity owner : server.getPlayerManager().getPlayerList()) {
+            ServerPlayerEntity pet = PetHelper.getPet(owner);
+            if (pet == null) continue;
 
-            PetNavigator navigator = navigators.get(uuid);
-            if (navigator != null) navigator.stop();
-        } catch (Exception e) {
-            BondExpanded.LOGGER.error("Ошибка: " + e.getMessage(), e);
+            if (!owner.getWorld().getRegistryKey().equals(pet.getWorld().getRegistryKey())) continue;
+            if (owner.distanceTo(pet) > 8.0D) continue;
+
+            owner.addStatusEffect(new StatusEffectInstance(StatusEffects.REGENERATION, 100, 0, true, false, true));
+            pet.addStatusEffect(new StatusEffectInstance(StatusEffects.REGENERATION, 100, 0, true, false, true));
         }
     }
 }
