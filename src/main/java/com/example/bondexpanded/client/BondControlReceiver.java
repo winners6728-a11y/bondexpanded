@@ -58,9 +58,14 @@ public final class BondControlReceiver {
                     String cmd = packet.command();
 
                     if ("fetch_return".equals(cmd)) {
-                        activeCommand = "fetch";
-                        phase = "returning";
-                        targetPos = null;
+                        // И для fetch, и для break — переключить в возврат
+                        if ("break".equals(activeCommand)) {
+                            phase = "returning";
+                        } else {
+                            activeCommand = "fetch";
+                            phase = "returning";
+                            targetPos = null;
+                        }
                     } else if ("fetch_hold".equals(cmd)) {
                         activeCommand = "fetch";
                         phase = "waiting_drop";
@@ -266,7 +271,12 @@ public final class BondControlReceiver {
     }
 
     private static void tickBreak(MinecraftClient client, ClientPlayerEntity pet) {
-        if (targetPos == null) { activeCommand = null; return; }
+        if (targetPos == null && !"returning".equals(phase)
+                && !"drop_requested".equals(phase) && !"waiting_drop".equals(phase)) {
+            activeCommand = null;
+            return;
+        }
+
         if (phase == null) phase = "going";
 
         switch (phase) {
@@ -283,7 +293,7 @@ public final class BondControlReceiver {
                 stopMovement(pet);
 
                 if (client.world.getBlockState(targetPos).isAir()) {
-                    phase = "returning";
+                    // Блок сломан — ждём, пока сервер подберёт дроп и пришлёт fetch_return
                     return;
                 }
 
@@ -300,24 +310,44 @@ public final class BondControlReceiver {
             case "returning" -> {
                 AbstractClientPlayerEntity owner = findOwner(client);
                 if (owner == null) { activeCommand = null; return; }
-                if (pet.distanceTo(owner) < 3.0D) {
-                    dropHeldItem(pet);
+
+                if (pet.distanceTo(owner) < 2.0D) {
                     stopMovement(pet);
-                    activeCommand = null;
-                    phase = null;
+                    phase = "drop_requested";
+
+                    double ddx = owner.getX() - pet.getX();
+                    double ddz = owner.getZ() - pet.getZ();
+                    float yaw = (float) (Math.atan2(ddz, ddx) * 180.0D / Math.PI) - 90.0F;
+                    pet.setHeadYaw(yaw);
+                    pet.setBodyYaw(yaw);
+
+                    try {
+                        ClientPlayNetworking.send(new BondExpandedPacket("fetch_drop"));
+                    } catch (Exception e) {
+                        BondExpanded.LOGGER.error("Ошибка: " + e.getMessage(), e);
+                    }
                     return;
                 }
+
                 moveTo(pet, owner.getX(), owner.getY(), owner.getZ(), 0.25D);
+            }
+            case "drop_requested", "waiting_drop" -> {
+                pet.setVelocity(0.0D, pet.getVelocity().y, 0.0D);
+
+                AbstractClientPlayerEntity owner = findOwner(client);
+                if (owner != null) {
+                    double ddx = owner.getX() - pet.getX();
+                    double ddz = owner.getZ() - pet.getZ();
+                    if (Math.abs(ddx) > 0.01D || Math.abs(ddz) > 0.01D) {
+                        float yaw = (float) (Math.atan2(ddz, ddx) * 180.0D / Math.PI) - 90.0F;
+                        pet.setHeadYaw(yaw);
+                        pet.setBodyYaw(yaw);
+                    }
+                }
             }
         }
     }
 
-    /**
-     * Движение через A*.
-     * - Путь пересчитывается раз в PATH_RECALC_INTERVAL тиков или если цель сдвинулась > 2 блоков.
-     * - Если путь не найден — идём напрямик.
-     * - Максимум MAX_NODES нод в A* — не грузит систему.
-     */
     private static void moveTo(ClientPlayerEntity pet, double x, double y, double z, double speed) {
         BlockPos goal = new BlockPos((int) Math.floor(x), (int) Math.floor(y), (int) Math.floor(z));
         BlockPos current = pet.getBlockPos();
@@ -557,20 +587,6 @@ public final class BondControlReceiver {
         if (absY >= absX && absY >= absZ) return dy > 0 ? Direction.UP : Direction.DOWN;
         if (absX >= absZ) return dx > 0 ? Direction.EAST : Direction.WEST;
         return dz > 0 ? Direction.SOUTH : Direction.NORTH;
-    }
-
-    private static void dropHeldItem(ClientPlayerEntity pet) {
-        try {
-            for (int i = 0; i < 9; i++) {
-                if (!pet.getInventory().getStack(i).isEmpty()) {
-                    pet.getInventory().selectedSlot = i;
-                    pet.dropSelectedItem(false);
-                    return;
-                }
-            }
-        } catch (Exception e) {
-            BondExpanded.LOGGER.error("Дроп не удался: " + e.getMessage(), e);
-        }
     }
 
     private static AbstractClientPlayerEntity findOwner(MinecraftClient client) {
