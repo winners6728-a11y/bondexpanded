@@ -187,7 +187,7 @@ public final class PetNavigator {
         try {
             double dx = targetX - pet.getX();
             double dz = targetZ - pet.getZ();
-            double dy = targetY + pet.getEyeHeight() - pet.getEyeY();
+            double dy = targetY + pet.getStandingEyeHeight() - pet.getEyeY();
             double horizontal = Math.sqrt(dx * dx + dz * dz);
 
             if (horizontal < 0.001D) return;
