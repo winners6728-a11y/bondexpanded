@@ -1,5 +1,7 @@
 package com.example.bondexpanded.client;
 
+import com.bondofthebeast.component.ModComponents;
+import com.bondofthebeast.component.PlayerBondComponent;
 import com.example.bondexpanded.BondExpanded;
 import com.example.bondexpanded.network.BondAttackPacket;
 import com.example.bondexpanded.network.BondControlPacket;
@@ -15,6 +17,7 @@ import net.minecraft.util.Hand;
 import net.minecraft.util.math.BlockPos;
 import net.minecraft.util.math.Box;
 import net.minecraft.util.math.Direction;
+import net.minecraft.util.math.MathHelper;
 import net.minecraft.util.math.Vec3d;
 
 import java.util.ArrayList;
@@ -30,9 +33,12 @@ import java.util.UUID;
 
 public final class BondControlReceiver {
 
-    private static final int TARGET_RESCAN_INTERVAL = 10;
-    private static final int PATH_RECALC_INTERVAL = 20;
-    private static final int MAX_NODES = 200;
+    private static final int TARGET_RESCAN_INTERVAL = 20;
+    private static final int PATH_RECALC_INTERVAL = 30;
+    private static final int MAX_NODES = 150;
+    private static final int STAGE_CHECK_INTERVAL = 40;
+    private static final int FINAL_STAGE_LEVEL = 4;
+    private static final float HEAD_YAW_STEP = 2.0F;
 
     private static String activeCommand = null;
     private static UUID ownerUuid = null;
@@ -41,6 +47,7 @@ public final class BondControlReceiver {
 
     private static int attackCooldown = 0;
     private static int rescanCooldown = 0;
+    private static int stageCheckCooldown = 0;
     private static LivingEntity cachedTarget = null;
 
     private static List<BlockPos> cachedPath = null;
@@ -58,7 +65,6 @@ public final class BondControlReceiver {
                     String cmd = packet.command();
 
                     if ("fetch_return".equals(cmd)) {
-                        // И для fetch, и для break — переключить в возврат
                         if ("break".equals(activeCommand)) {
                             phase = "returning";
                         } else {
@@ -67,7 +73,6 @@ public final class BondControlReceiver {
                             targetPos = null;
                         }
                     } else if ("fetch_hold".equals(cmd)) {
-                        activeCommand = "fetch";
                         phase = "waiting_drop";
                     } else if ("stop".equals(cmd)) {
                         activeCommand = "stop";
@@ -95,6 +100,7 @@ public final class BondControlReceiver {
                     cachedPathGoal = null;
                     pathIndex = 0;
                     pathCooldown = 0;
+                    stageCheckCooldown = 0;
 
                     BondExpanded.LOGGER.info("[Bondexpanded] Команда: " + cmd);
                 }
@@ -108,6 +114,20 @@ public final class BondControlReceiver {
         ClientPlayerEntity pet = client.player;
 
         try {
+            if (stageCheckCooldown <= 0) {
+                stageCheckCooldown = STAGE_CHECK_INTERVAL;
+
+                if (!isFinalStage(client)) {
+                    activeCommand = null;
+                    phase = null;
+                    cachedPath = null;
+                    cachedTarget = null;
+                    return;
+                }
+            } else {
+                stageCheckCooldown--;
+            }
+
             switch (activeCommand) {
                 case "come" -> tickCome(client, pet);
                 case "attack" -> tickAttack(client, pet, 20.0D);
@@ -130,6 +150,20 @@ public final class BondControlReceiver {
             if (pathCooldown > 0) pathCooldown--;
         } catch (Exception e) {
             BondExpanded.LOGGER.error("Ошибка: " + e.getMessage(), e);
+        }
+    }
+
+    private static boolean isFinalStage(MinecraftClient client) {
+        try {
+            ClientPlayerEntity player = client.player;
+            if (player == null) return false;
+
+            PlayerBondComponent component = ModComponents.PLAYER_BOND.get(player);
+            if (component == null) return false;
+
+            return component.getBondLevel() >= FINAL_STAGE_LEVEL;
+        } catch (Exception e) {
+            return true;
         }
     }
 
@@ -160,6 +194,9 @@ public final class BondControlReceiver {
 
         double distance = pet.distanceTo(target);
 
+        // Плавный поворот головы на туловище моба
+        smoothLookAtTorso(pet, target);
+
         if (distance > 2.0D) {
             moveTo(pet, target.getX(), target.getY(), target.getZ(), 0.25D);
         } else {
@@ -174,6 +211,34 @@ public final class BondControlReceiver {
                 }
                 attackCooldown = 12;
             }
+        }
+    }
+
+    /**
+     * Плавный поворот: только yaw, только на туловище. 2° за тик.
+     * Pitch не трогаем совсем.
+     */
+    private static void smoothLookAtTorso(ClientPlayerEntity pet, LivingEntity target) {
+        try {
+            double dx = target.getX() - pet.getX();
+            double dz = target.getZ() - pet.getZ();
+
+            if (Math.abs(dx) < 0.01D && Math.abs(dz) < 0.01D) return;
+
+            float targetYaw = (float) (Math.atan2(dz, dx) * 180.0D / Math.PI) - 90.0F;
+            float currentYaw = pet.getYaw();
+
+            float deltaYaw = MathHelper.wrapDegrees(targetYaw - currentYaw);
+            float step = MathHelper.clamp(deltaYaw, -HEAD_YAW_STEP, HEAD_YAW_STEP);
+
+            float newYaw = currentYaw + step;
+
+            pet.setYaw(newYaw);
+            pet.setHeadYaw(newYaw);
+            pet.setBodyYaw(newYaw);
+
+        } catch (Exception e) {
+            BondExpanded.LOGGER.error("Ошибка поворота: " + e.getMessage(), e);
         }
     }
 
@@ -226,9 +291,7 @@ public final class BondControlReceiver {
 
                 moveTo(pet, targetPos.getX() + 0.5D, targetPos.getY(), targetPos.getZ() + 0.5D, 0.25D);
             }
-            case "waiting_pickup" -> {
-                pet.setVelocity(0.0D, pet.getVelocity().y, 0.0D);
-            }
+            case "waiting_pickup" -> pet.setVelocity(0.0D, pet.getVelocity().y, 0.0D);
             case "returning" -> {
                 AbstractClientPlayerEntity owner = findOwner(client);
                 if (owner == null) { activeCommand = null; return; }
@@ -293,7 +356,6 @@ public final class BondControlReceiver {
                 stopMovement(pet);
 
                 if (client.world.getBlockState(targetPos).isAir()) {
-                    // Блок сломан — ждём, пока сервер подберёт дроп и пришлёт fetch_return
                     return;
                 }
 
@@ -478,9 +540,7 @@ public final class BondControlReceiver {
 
                     if (old == null || newCost < old.g) {
                         PathNode next = new PathNode(
-                                neighbor,
-                                current,
-                                newCost,
+                                neighbor, current, newCost,
                                 newCost + heuristic(neighbor, goal)
                         );
                         all.put(neighbor, next);
@@ -490,7 +550,6 @@ public final class BondControlReceiver {
             }
 
             return null;
-
         } catch (Exception e) {
             BondExpanded.LOGGER.error("A* сломался: " + e.getMessage(), e);
             return null;
@@ -501,26 +560,16 @@ public final class BondControlReceiver {
         List<BlockPos> list = new ArrayList<>(8);
 
         BlockPos[] flat = {
-                pos.add(1, 0, 0),
-                pos.add(-1, 0, 0),
-                pos.add(0, 0, 1),
-                pos.add(0, 0, -1)
+                pos.add(1, 0, 0), pos.add(-1, 0, 0),
+                pos.add(0, 0, 1), pos.add(0, 0, -1)
         };
-
-        for (BlockPos p : flat) {
-            if (isWalkable(pet, p)) list.add(p);
-        }
+        for (BlockPos p : flat) if (isWalkable(pet, p)) list.add(p);
 
         BlockPos[] up = {
-                pos.add(1, 1, 0),
-                pos.add(-1, 1, 0),
-                pos.add(0, 1, 1),
-                pos.add(0, 1, -1)
+                pos.add(1, 1, 0), pos.add(-1, 1, 0),
+                pos.add(0, 1, 1), pos.add(0, 1, -1)
         };
-
-        for (BlockPos p : up) {
-            if (isWalkable(pet, p)) list.add(p);
-        }
+        for (BlockPos p : up) if (isWalkable(pet, p)) list.add(p);
 
         return list;
     }
@@ -540,7 +589,6 @@ public final class BondControlReceiver {
             if (floor.isAir()) return false;
 
             return true;
-
         } catch (Exception e) {
             return false;
         }
