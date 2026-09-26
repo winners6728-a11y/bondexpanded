@@ -1,8 +1,11 @@
 package com.example.bondexpanded.client;
 
+import com.example.bondexpanded.network.BondGiveRequestPacket;
 import net.fabricmc.api.ClientModInitializer;
 import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents;
+import net.fabricmc.fabric.api.client.networking.v1.ClientPlayNetworking;
 import net.fabricmc.fabric.api.client.screen.v1.ScreenEvents;
+import net.minecraft.client.MinecraftClient;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -14,7 +17,6 @@ public final class BondExpandedClient implements ClientModInitializer {
     public void onInitializeClient() {
         try {
             BondControlReceiver.register();
-
             ClientTickEvents.END_CLIENT_TICK.register(BondControlReceiver::tick);
 
             ScreenEvents.AFTER_INIT.register((client, screen, scaledWidth, scaledHeight) -> {
@@ -26,6 +28,20 @@ public final class BondExpandedClient implements ClientModInitializer {
                     LOGGER.error("Ошибка: " + e.getMessage(), e);
                 }
             });
+
+            ClientPlayNetworking.registerGlobalReceiver(
+                    BondGiveRequestPacket.TYPE,
+                    (packet, player, responseSender) -> {
+                        MinecraftClient client = MinecraftClient.getInstance();
+                        client.execute(() -> {
+                            try {
+                                client.setScreen(new PetInventoryScreen(packet.slots(), packet.stacks()));
+                            } catch (Exception e) {
+                                LOGGER.error("Ошибка открытия экрана: " + e.getMessage(), e);
+                            }
+                        });
+                    }
+            );
         } catch (Exception e) {
             LOGGER.error("Ошибка инициализации клиента: " + e.getMessage(), e);
         }
