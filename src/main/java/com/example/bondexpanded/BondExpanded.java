@@ -3,6 +3,7 @@ package com.example.bondexpanded;
 import com.example.bondexpanded.command.BondExpandedCommands;
 import com.example.bondexpanded.network.BondAttackPacket;
 import com.example.bondexpanded.network.BondExpandedPacket;
+import com.example.bondexpanded.network.BondGiveConfirmPacket;
 import com.example.bondexpanded.util.BondExpandedServerState;
 import net.fabricmc.api.ModInitializer;
 import net.fabricmc.fabric.api.command.v2.CommandRegistrationCallback;
@@ -51,6 +52,21 @@ public final class BondExpanded implements ModInitializer {
         }
 
         try {
+            ServerPlayNetworking.registerGlobalReceiver(
+                    BondGiveConfirmPacket.TYPE,
+                    (packet, player, responseSender) -> {
+                        if (player.getServer() != null) {
+                            player.getServer().execute(() ->
+                                    BondExpandedServerState.handleGiveConfirm(player, packet.slots())
+                            );
+                        }
+                    }
+            );
+        } catch (Exception e) {
+            LOGGER.error("Ошибка регистрации пакета give: " + e.getMessage(), e);
+        }
+
+        try {
             BondExpandedServerState.register();
         } catch (Exception e) {
             LOGGER.error("Ошибка регистрации server state: " + e.getMessage(), e);
@@ -77,15 +93,8 @@ public final class BondExpanded implements ModInitializer {
             double distance = player.distanceTo(target);
             if (distance > 5.0D) return;
 
-            target.damage(
-                    player.getDamageSources().playerAttack(player),
-                    5.0F
-            );
-
+            target.damage(player.getDamageSources().playerAttack(player), 5.0F);
             player.swingHand(Hand.MAIN_HAND);
-
-            LOGGER.info("[Bondexpanded] Урон по " + target.getName().getString()
-                    + ", осталось HP: " + target.getHealth());
 
         } catch (Exception e) {
             LOGGER.error("Ошибка атаки на сервере: " + e.getMessage(), e);
