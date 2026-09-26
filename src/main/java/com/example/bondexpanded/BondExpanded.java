@@ -13,9 +13,7 @@ import org.slf4j.LoggerFactory;
 public final class BondExpanded implements ModInitializer {
 
     public static final String MOD_ID = "bondexpanded";
-
-    public static final Logger LOGGER =
-            LoggerFactory.getLogger(MOD_ID);
+    public static final Logger LOGGER = LoggerFactory.getLogger(MOD_ID);
 
     @Override
     public void onInitialize() {
@@ -25,22 +23,25 @@ public final class BondExpanded implements ModInitializer {
                     (packet, player, responseSender) -> {
                         if (player.getServer() != null) {
                             player.getServer().execute(() ->
-                                    BondExpandedServerState.handleCommand(
-                                            player,
-                                            packet.commandId()
-                                    )
+                                    BondExpandedServerState.handleCommand(player, packet.commandId())
                             );
                         }
                     }
             );
         } catch (Exception e) {
-            LOGGER.error("Ошибка: " + e.getMessage(), e);
+            LOGGER.error("Ошибка регистрации пакета: " + e.getMessage(), e);
+        }
+
+        try {
+            BondExpandedServerState.register();
+        } catch (Exception e) {
+            LOGGER.error("Ошибка регистрации server state: " + e.getMessage(), e);
         }
 
         try {
             ProximityEffectHandler.register();
         } catch (Exception e) {
-            LOGGER.error("Ошибка: " + e.getMessage(), e);
+            LOGGER.error("Ошибка регистрации эффектов: " + e.getMessage(), e);
         }
 
         try {
@@ -49,7 +50,7 @@ public final class BondExpanded implements ModInitializer {
                             BondExpandedCommands.register(dispatcher)
             );
         } catch (Exception e) {
-            LOGGER.error("Ошибка: " + e.getMessage(), e);
+            LOGGER.error("Ошибка регистрации команд: " + e.getMessage(), e);
         }
     }
 }
