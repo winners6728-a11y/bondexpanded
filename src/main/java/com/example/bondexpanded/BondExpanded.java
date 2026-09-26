@@ -2,7 +2,6 @@ package com.example.bondexpanded;
 
 import com.example.bondexpanded.command.BondExpandedCommands;
 import com.example.bondexpanded.network.BondExpandedPacket;
-import com.example.bondexpanded.passive.ProximityEffectHandler;
 import com.example.bondexpanded.util.BondExpandedServerState;
 import net.fabricmc.api.ModInitializer;
 import net.fabricmc.fabric.api.command.v2.CommandRegistrationCallback;
@@ -36,12 +35,6 @@ public final class BondExpanded implements ModInitializer {
             BondExpandedServerState.register();
         } catch (Exception e) {
             LOGGER.error("Ошибка регистрации server state: " + e.getMessage(), e);
-        }
-
-        try {
-            ProximityEffectHandler.register();
-        } catch (Exception e) {
-            LOGGER.error("Ошибка регистрации эффектов: " + e.getMessage(), e);
         }
 
         try {
