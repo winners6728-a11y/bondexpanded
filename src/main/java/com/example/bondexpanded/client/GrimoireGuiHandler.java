@@ -20,9 +20,9 @@ public final class GrimoireGuiHandler {
             "heal",
             "speed",
             "info",
-            "release",
             "howl",
-            "hunt"
+            "hunt",
+            "break"
     };
 
     private static final String[] LABELS = {
@@ -33,9 +33,9 @@ public final class GrimoireGuiHandler {
             "Лечение",
             "Скорость",
             "Инфо",
-            "Освободить",
             "Вой",
-            "Охота"
+            "Охота",
+            "Сломать"
     };
 
     private GrimoireGuiHandler() {
@@ -44,27 +44,20 @@ public final class GrimoireGuiHandler {
     public static void attach(Screen screen) {
         try {
             String className = screen.getClass().getName();
-
             boolean isBondScreen =
                     className.contains("StaffPetScreen")
                             || className.contains("PetStatusScreen")
                             || className.contains("Grimoire");
-
-            if (!isBondScreen) {
-                return;
-            }
+            if (!isBondScreen) return;
 
             List<ClickableWidget> buttons = Screens.getButtons(screen);
-
             int startX = Math.max(4, screen.width - 174);
             int startY = 30;
 
             for (int i = 0; i < COMMANDS.length; i++) {
                 final String commandId = COMMANDS[i];
-
                 int column = i / 5;
                 int row = i % 5;
-
                 int x = startX + column * 84;
                 int y = startY + row * 24;
 
