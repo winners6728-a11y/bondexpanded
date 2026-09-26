@@ -2,6 +2,7 @@ package com.example.bondexpanded.util;
 
 import com.example.bondexpanded.BondExpanded;
 import com.example.bondexpanded.network.BondControlPacket;
+import com.example.bondexpanded.network.BondGiveRequestPacket;
 import net.fabricmc.fabric.api.event.lifecycle.v1.ServerTickEvents;
 import net.fabricmc.fabric.api.networking.v1.ServerPlayNetworking;
 import net.minecraft.block.BlockState;
@@ -38,21 +39,16 @@ public final class BondExpandedServerState {
     private static final Map<UUID, String> activeCommands = new HashMap<>();
     private static final Map<UUID, UUID> droppedItems = new HashMap<>();
     private static final Map<UUID, BreakTask> breakTasks = new HashMap<>();
-
-    /** Слоты, в которые питомец положил поднятый дроп (для fetch и break). */
     private static final Map<UUID, List<Integer>> droppedSlots = new HashMap<>();
-
-    /** Инструмент для break: слот и предыдущий selectedSlot. */
     private static final Map<UUID, int[]> toolState = new HashMap<>();
+    private static final Map<UUID, int[]> giveSlots = new HashMap<>();
 
     private BondExpandedServerState() {
     }
 
     private static final class BreakTask {
         final BlockPos pos;
-        BreakTask(BlockPos pos) {
-            this.pos = pos;
-        }
+        BreakTask(BlockPos pos) { this.pos = pos; }
     }
 
     public static void register() {
@@ -87,16 +83,17 @@ public final class BondExpandedServerState {
                 return;
             }
 
-            // UTILITY — всегда
+            // UTILITY - всегда
             switch (command) {
                 case "heal" -> { applyHeal(owner, pet); return; }
                 case "speed" -> { applySpeed(owner, pet); return; }
                 case "info" -> { showInfo(owner, pet); return; }
                 case "howl" -> { doHowl(owner, pet); return; }
                 case "stop" -> { sendControl(owner, pet, "stop", null); return; }
+                case "give_open" -> { sendGiveRequest(owner, pet); return; }
             }
 
-            // AI — только финальная стадия + ошейник
+            // AI - только финальная стадия + ошейник
             if (!PetHelper.isFinalStage(pet)) {
                 owner.sendMessage(Text.literal("Питомец должен быть в финальной форме"), false);
                 return;
@@ -125,19 +122,128 @@ public final class BondExpandedServerState {
         switch (command) {
             case "fetch_arrived" -> handleFetchArrived(pet);
             case "fetch_drop" -> handleFetchDrop(pet);
+            case "give_arrived" -> handleGiveArrived(pet);
         }
     }
 
-    /**
-     * Питомец подошёл к предмету. Подбираем его в СВОБОДНЫЙ слот хотбара и запоминаем слот.
-     */
+    private static void sendGiveRequest(ServerPlayerEntity owner, ServerPlayerEntity pet) {
+        try {
+            int size = pet.getInventory().size();
+            List<Integer> slotsList = new ArrayList<>();
+            List<ItemStack> stacksList = new ArrayList<>();
+
+            for (int i = 0; i < size; i++) {
+                ItemStack stack = pet.getInventory().getStack(i);
+                if (stack.isEmpty()) continue;
+                slotsList.add(i);
+                stacksList.add(stack.copy());
+            }
+
+            if (slotsList.isEmpty()) {
+                owner.sendMessage(Text.literal("У питомца пусто в инвентаре"), false);
+                return;
+            }
+
+            int[] slots = new int[slotsList.size()];
+            for (int i = 0; i < slotsList.size(); i++) slots[i] = slotsList.get(i);
+
+            ServerPlayNetworking.send(
+                    owner,
+                    new BondGiveRequestPacket(slots, stacksList)
+            );
+
+        } catch (Exception e) {
+            BondExpanded.LOGGER.error("Ошибка give_open: " + e.getMessage(), e);
+        }
+    }
+
+    public static void handleGiveConfirm(ServerPlayerEntity owner, int[] slots) {
+        try {
+            ServerPlayerEntity pet = PetHelper.getPet(owner);
+            if (pet == null) return;
+
+            if (!PetHelper.isFinalStage(pet)) {
+                owner.sendMessage(Text.literal("Питомец должен быть в финальной форме"), false);
+                return;
+            }
+            if (!PetHelper.hasCollar(pet)) {
+                owner.sendMessage(Text.literal("На питомце нет ошейника подчинения"), false);
+                return;
+            }
+
+            if (slots.length == 0) return;
+
+            giveSlots.put(pet.getUuid(), slots);
+            activeCommands.put(pet.getUuid(), "give");
+
+            ServerPlayNetworking.send(
+                    pet,
+                    new BondControlPacket("give", owner.getUuidAsString(), -1, -1, -1)
+            );
+
+            owner.sendMessage(Text.literal("Питомец идёт к вам"), false);
+
+        } catch (Exception e) {
+            BondExpanded.LOGGER.error("Ошибка give_confirm: " + e.getMessage(), e);
+        }
+    }
+
+    private static void handleGiveArrived(ServerPlayerEntity pet) {
+        try {
+            ServerPlayerEntity owner = PetHelper.getOwner(pet);
+            if (owner == null) { stopPet(pet); return; }
+
+            int[] slots = giveSlots.remove(pet.getUuid());
+            if (slots == null || slots.length == 0) { stopPet(pet); return; }
+
+            ServerWorld world = pet.getServerWorld();
+            int thrown = 0;
+
+            for (int slot : slots) {
+                if (slot < 0 || slot >= pet.getInventory().size()) continue;
+                ItemStack stack = pet.getInventory().getStack(slot);
+                if (stack.isEmpty()) continue;
+
+                ItemStack copy = stack.copy();
+                pet.getInventory().setStack(slot, ItemStack.EMPTY);
+
+                ItemEntity drop = new ItemEntity(
+                        world,
+                        pet.getX(),
+                        pet.getEyeY() - 0.3D,
+                        pet.getZ(),
+                        copy
+                );
+
+                Vec3d dir = new Vec3d(
+                        owner.getX() - pet.getX(),
+                        0.0D,
+                        owner.getZ() - pet.getZ()
+                ).normalize();
+
+                drop.setVelocity(dir.x * 0.25D, 0.15D, dir.z * 0.25D);
+                drop.setPickupDelay(10);
+                world.spawnEntity(drop);
+                droppedItems.put(pet.getUuid(), drop.getUuid());
+                thrown++;
+            }
+
+            if (thrown == 0) { stopPet(pet); return; }
+
+            ServerPlayNetworking.send(
+                    pet,
+                    new BondControlPacket("give_hold", owner.getUuidAsString(), -1, -1, -1)
+            );
+
+        } catch (Exception e) {
+            BondExpanded.LOGGER.error("Ошибка give_arrived: " + e.getMessage(), e);
+        }
+    }
+
     private static void handleFetchArrived(ServerPlayerEntity pet) {
         try {
             ServerPlayerEntity owner = PetHelper.getOwner(pet);
-            if (owner == null) {
-                stopPet(pet);
-                return;
-            }
+            if (owner == null) { stopPet(pet); return; }
 
             ServerWorld world = pet.getServerWorld();
             List<ItemEntity> items = world.getEntitiesByClass(
@@ -178,9 +284,6 @@ public final class BondExpandedServerState {
         }
     }
 
-    /**
-     * Питомец дошёл до хозяина. Выкидываем ТОЛЬКО те предметы, что подобрали (из droppedSlots).
-     */
     private static void handleFetchDrop(ServerPlayerEntity pet) {
         try {
             ServerPlayerEntity owner = PetHelper.getOwner(pet);
@@ -189,7 +292,6 @@ public final class BondExpandedServerState {
             List<Integer> slots = droppedSlots.remove(pet.getUuid());
 
             if (slots == null || slots.isEmpty()) {
-                // Нечего выкидывать - просто завершаем
                 stopPet(pet);
                 return;
             }
@@ -220,10 +322,7 @@ public final class BondExpandedServerState {
 
                 drop.setVelocity(dir.x * 0.25D, 0.15D, dir.z * 0.25D);
                 drop.setPickupDelay(10);
-
                 world.spawnEntity(drop);
-
-                // Следим за последним выкинутым (если несколько - подберут все, но этого достаточно)
                 droppedItems.put(pet.getUuid(), drop.getUuid());
                 thrown++;
             }
@@ -233,7 +332,6 @@ public final class BondExpandedServerState {
                 return;
             }
 
-            // Возвращаем инструмент в исходный слот, если был break
             int[] tool = toolState.remove(pet.getUuid());
             if (tool != null && tool[1] >= 0 && tool[1] < 9) {
                 pet.getInventory().selectedSlot = tool[1];
@@ -279,10 +377,6 @@ public final class BondExpandedServerState {
         }
     }
 
-    /**
-     * Следим за блоками, которые ломает питомец. Как только блок сломан - собираем ВСЕ дропы
-     * в свободные слоты, запоминаем их, отправляем fetch_return.
-     */
     private static void tickBreakTasks(MinecraftServer server) {
         Iterator<Map.Entry<UUID, BreakTask>> it = breakTasks.entrySet().iterator();
 
@@ -299,7 +393,6 @@ public final class BondExpandedServerState {
 
             if (!state.isAir()) continue;
 
-            // Блок сломан - собираем ВСЕ дропы в радиусе
             List<ItemEntity> drops = world.getEntitiesByClass(
                     ItemEntity.class,
                     new Box(task.pos).expand(2.5D),
@@ -317,12 +410,6 @@ public final class BondExpandedServerState {
 
                 pet.getInventory().setStack(freeSlot, stack);
                 slots.add(freeSlot);
-            }
-
-            // Вернуть селектед слот к инструменту или предыдущему
-            int[] tool = toolState.get(petUuid);
-            if (tool != null && tool[1] >= 0 && tool[1] < 9) {
-                // ничего пока не делаем, вернём после дропа
             }
 
             ServerPlayerEntity owner = PetHelper.getOwner(pet);
@@ -353,6 +440,7 @@ public final class BondExpandedServerState {
                 droppedSlots.remove(pet.getUuid());
                 breakTasks.remove(pet.getUuid());
                 toolState.remove(pet.getUuid());
+                giveSlots.remove(pet.getUuid());
             } else {
                 activeCommands.put(pet.getUuid(), command);
             }
@@ -447,7 +535,6 @@ public final class BondExpandedServerState {
             return;
         }
 
-        // Ищем подходящий инструмент и переключаемся на него
         int prevSelected = pet.getInventory().selectedSlot;
         int toolSlot = -1;
 
@@ -483,6 +570,7 @@ public final class BondExpandedServerState {
         droppedSlots.remove(pet.getUuid());
         breakTasks.remove(pet.getUuid());
         toolState.remove(pet.getUuid());
+        giveSlots.remove(pet.getUuid());
     }
 
     private static void applyHeal(ServerPlayerEntity owner, ServerPlayerEntity pet) {
